@@ -1,0 +1,148 @@
+#include "CONFIG.h"
+#include "HAL.h"
+#include "CH59x_common.h"
+
+// Simple BLE Broadcaster Task Events
+#define SBP_START_DEVICE_EVT         0x0001
+#define SBP_PERIODIC_EVT             0x0002
+__attribute__((aligned(4))) uint32_t MEM_BUF[BLE_MEMHEAP_SIZE / 4];
+
+// What is the advertising interval when device is discoverable (units of 625us, min is 160=100ms)
+#define DEFAULT_ADVERTISING_INTERVAL (160*3)
+
+// How often to perform periodic event
+#define SBP_PERIODIC_EVT_PERIOD 160
+
+#if(defined(BLE_MAC)) && (BLE_MAC == TRUE)
+const uint8_t MacAddr[6] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+#endif
+
+static uint8_t advertData[] = {
+	0x1e, /* Length (30) */
+	0xff, /* Manufacturer Specific Data (type 0xff) */
+	0x4c, 0x00, /* Company ID (Apple) */
+	0x12, 0x19, /* Offline Finding type and length */
+	0x00, /* State */
+	0x11, 0x22, 0x33, 0x22, 0x11, 0x22, 0x33, 0x22,
+	0x11, 0x22, 0x33, 0x22, 0x11, 0x22, 0x33, 0x22,
+	0x11, 0x22, 0x33, 0x22, 0x11, 0x22,
+	0x00, /* First two bits */
+	0x00, /* Hint (0x00) */
+};
+
+static uint8_t FindMy_TaskID; // Task ID for internal task/event processing
+
+static void FindMy_StateNotificationCB(gapRole_States_t newState) {
+#ifdef DEBUG
+	switch(newState) {
+		case GAPROLE_STARTED:
+			PRINT("Initialized..\n");
+			break;
+		case GAPROLE_ADVERTISING:
+			PRINT("Advertising..\n");
+			break;
+		case GAPROLE_WAITING:
+			PRINT("Waiting for advertising..\n");
+			break;
+		case GAPROLE_ERROR:
+			PRINT("Error..\n");
+			break;
+		default:
+			break;
+	}
+#endif
+}
+static gapRolesBroadcasterCBs_t FindMy_BroadcasterCBs = {FindMy_StateNotificationCB, NULL};
+
+static void FindMy_ProcessTMOSMsg(tmos_event_hdr_t *pMsg) {
+	switch(pMsg->event) {
+		default:
+			break;
+	}
+}
+
+static void performPeriodicTask(void) {
+	GPIOA_InverseBits(GPIO_Pin_8);
+}
+
+uint16_t FindMy_ProcessEvent(uint8_t task_id, uint16_t events) {
+	if(events & SYS_EVENT_MSG) {
+		uint8_t *pMsg;
+
+		if((pMsg = tmos_msg_receive(FindMy_TaskID)) != NULL) {
+			FindMy_ProcessTMOSMsg((tmos_event_hdr_t *)pMsg);
+			// Release the TMOS message
+			tmos_msg_deallocate(pMsg);
+		}
+
+		// return unprocessed events
+		return (events ^ SYS_EVENT_MSG);
+	}
+
+	if(events & SBP_PERIODIC_EVT) {
+		// Restart timer
+		if(SBP_PERIODIC_EVT_PERIOD) {
+			tmos_start_task(FindMy_TaskID, SBP_PERIODIC_EVT, SBP_PERIODIC_EVT_PERIOD);
+		}
+		// Perform periodic application task
+		performPeriodicTask();
+		return (events ^ SBP_PERIODIC_EVT);
+	}
+
+	if(events & SBP_START_DEVICE_EVT) {
+		// Start the Device
+		GAPRole_BroadcasterStartDevice(&FindMy_BroadcasterCBs);
+		performPeriodicTask(); // turn off the LED
+		tmos_start_task(FindMy_TaskID, SBP_PERIODIC_EVT, SBP_PERIODIC_EVT_PERIOD);
+		return (events ^ SBP_START_DEVICE_EVT);
+	}
+
+	// Discard unknown events
+	return 0;
+}
+
+void FindMy_Init() {
+	FindMy_TaskID = TMOS_ProcessEventRegister(FindMy_ProcessEvent);
+
+	// Device starts advertising upon initialization
+	uint8_t initial_advertising_enable = TRUE;
+	uint8_t initial_adv_event_type = GAP_ADTYPE_ADV_NONCONN_IND;
+	// Set the GAP Role Parameters
+	GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &initial_advertising_enable);
+	GAPRole_SetParameter(GAPROLE_ADV_EVENT_TYPE, sizeof(uint8_t), &initial_adv_event_type);
+	GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
+
+	uint16_t advInt = DEFAULT_ADVERTISING_INTERVAL;
+
+	GAP_SetParamValue(TGAP_DISC_ADV_INT_MIN, advInt);
+	GAP_SetParamValue(TGAP_DISC_ADV_INT_MAX, advInt);
+
+	// Setup a delayed profile startup
+	tmos_set_event(FindMy_TaskID, SBP_START_DEVICE_EVT);
+}
+
+__HIGH_CODE __attribute__((noinline)) void Main_Circulation() {
+	while(1) {
+		TMOS_SystemProcess();
+	}
+}
+
+int main(void){
+#if(defined(DCDC_ENABLE)) && (DCDC_ENABLE == TRUE)
+	PWR_DCDCCfg(ENABLE);
+#endif
+	SetSysClock(CLK_SOURCE_PLL_60MHz);
+#if(defined(HAL_SLEEP)) && (HAL_SLEEP == TRUE)
+	GPIOA_ModeCfg(GPIO_Pin_All, GPIO_ModeIN_PU);
+	GPIOB_ModeCfg(GPIO_Pin_All, GPIO_ModeIN_PU);
+#endif
+	// enable LED
+	GPIOA_ModeCfg(GPIO_Pin_8, GPIO_ModeOut_PP_20mA);
+
+	CH59x_BLEInit();
+	HAL_Init();
+	GAPRole_BroadcasterInit();
+	FindMy_Init();
+
+	Main_Circulation();	// I think I will use this name for every event loop from now on
+}

@@ -1,0 +1,7 @@
+#this file exist for clangd to propperly see all libraries
+CompileFlags:
+  Add:
+    - "-I../sdk/StdPeriphDriver/inc/"
+    - "-I../sdk/RVMSIS/"
+    - "-I../sdk/BLE/HAL/include/"
+    - "-I../sdk/BLE/LIB/"
