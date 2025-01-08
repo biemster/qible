@@ -3,7 +3,7 @@
 # Prefix for older riscv gcc is  risv-none-embed
 # Prefix for newer riscv gcc is  risv-none-elf
 # TOOLCHAIN_PREFIX := riscv-none-embed
-TOOLCHAIN_PREFIX := ../MRS_Toolchain_Linux_x64_V1.92/RISC-V_Embedded_GCC12/bin/riscv-none-elf
+TOOLCHAIN_PREFIX := ../../../MRS_Toolchain_Linux_x64_V1.92/RISC-V_Embedded_GCC12/bin/riscv-none-elf
 
 
 APP_C_SRCS += \
